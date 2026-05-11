@@ -1225,13 +1225,12 @@ async function main() {
 
     case '--daemon':
     default: {
-      // Remote worker mode: no local daemon should ever run. A daemon here would
-      // create a split database (local + remote) and waste resources.
-      if (isRemoteWorker()) {
-        logger.info('SYSTEM', 'Remote worker mode — daemon startup aborted', { baseUrl: getWorkerBaseUrl() });
-        process.exit(0);
-      }
-
+      // Reaching --daemon is always intentional (systemd unit or spawnDaemon
+      // from worker-spawner). The remote-mode guard belongs on the caller
+      // side — ensureWorkerStarted already short-circuits, and start/stop/
+      // restart CLI cases above warn the user. The daemon process itself
+      // shouldn't second-guess its own invocation, so the same machine can be
+      // both worker host and a client.
       const existingPidInfo = readPidFile();
       if (verifyPidFileOwnership(existingPidInfo)) {
         logger.info('SYSTEM', 'Worker already running (PID alive), refusing to start duplicate', {
