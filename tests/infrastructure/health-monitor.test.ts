@@ -89,7 +89,7 @@ describe('HealthMonitor', () => {
       } as unknown as Response));
 
       const start = Date.now();
-      const result = await waitForHealth(37777, 5000);
+      const result = await waitForHealth('http://127.0.0.1:37777', 5000);
       const elapsed = Date.now() - start;
 
       expect(result).toBe(true);
@@ -100,7 +100,7 @@ describe('HealthMonitor', () => {
       global.fetch = mock(() => Promise.reject(new Error('ECONNREFUSED')));
 
       const start = Date.now();
-      const result = await waitForHealth(39999, 1500);
+      const result = await waitForHealth('http://127.0.0.1:39999', 1500);
       const elapsed = Date.now() - start;
 
       expect(result).toBe(false);
@@ -122,7 +122,7 @@ describe('HealthMonitor', () => {
         } as unknown as Response);
       });
 
-      const result = await waitForHealth(37777, 5000);
+      const result = await waitForHealth('http://127.0.0.1:37777', 5000);
 
       expect(result).toBe(true);
       expect(callCount).toBeGreaterThanOrEqual(3);
@@ -136,11 +136,28 @@ describe('HealthMonitor', () => {
       } as unknown as Response));
       global.fetch = fetchMock;
 
-      await waitForHealth(37777, 1000);
+      await waitForHealth('http://127.0.0.1:37777', 1000);
 
       const calls = fetchMock.mock.calls;
       expect(calls.length).toBeGreaterThan(0);
       expect(calls[0][0]).toBe('http://127.0.0.1:37777/api/health');
+    });
+
+    it('should hit the configured remote baseUrl in remote worker mode', async () => {
+      const fetchMock = mock(() => Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('')
+      } as unknown as Response));
+      global.fetch = fetchMock;
+
+      // Remote worker mode: hooks pass a full remote URL as baseUrl.
+      // HealthMonitor must forward it verbatim without rewriting to 127.0.0.1.
+      await waitForHealth('http://claude-mem.local:37777', 1000);
+
+      const calls = fetchMock.mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls[0][0]).toBe('http://claude-mem.local:37777/api/health');
     });
 
     it('should use default timeout when not specified', async () => {
@@ -150,7 +167,7 @@ describe('HealthMonitor', () => {
         text: () => Promise.resolve('')
       } as unknown as Response));
 
-      const result = await waitForHealth(37777);
+      const result = await waitForHealth('http://127.0.0.1:37777');
 
       expect(result).toBe(true);
     });
@@ -174,7 +191,7 @@ describe('HealthMonitor', () => {
     it('should assume match when worker version is unavailable', async () => {
       global.fetch = mock(() => Promise.reject(new Error('ECONNREFUSED')));
 
-      const result = await checkVersionMatch(39999);
+      const result = await checkVersionMatch('http://127.0.0.1:39999');
 
       expect(result.matches).toBe(true);
       expect(result.workerVersion).toBeNull();
@@ -187,7 +204,7 @@ describe('HealthMonitor', () => {
         text: () => Promise.resolve(JSON.stringify({ version: '0.0.0-definitely-wrong' }))
       } as unknown as Response));
 
-      const result = await checkVersionMatch(37777);
+      const result = await checkVersionMatch('http://127.0.0.1:37777');
 
       const pluginVersion = getInstalledPluginVersion();
       if (pluginVersion !== 'unknown' && pluginVersion !== '0.0.0-definitely-wrong') {
@@ -205,7 +222,7 @@ describe('HealthMonitor', () => {
         text: () => Promise.resolve(JSON.stringify({ version: pluginVersion }))
       } as unknown as Response));
 
-      const result = await checkVersionMatch(37777);
+      const result = await checkVersionMatch('http://127.0.0.1:37777');
 
       expect(result.matches).toBe(true);
       expect(result.pluginVersion).toBe(pluginVersion);

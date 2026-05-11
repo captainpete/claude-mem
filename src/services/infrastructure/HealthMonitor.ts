@@ -6,11 +6,11 @@ import { logger } from '../../utils/logger.js';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
 
 async function httpRequestToWorker(
-  port: number,
+  baseUrl: string,
   endpointPath: string,
   method: string = 'GET'
 ): Promise<{ ok: boolean; statusCode: number; body: string }> {
-  const response = await fetch(`http://127.0.0.1:${port}${endpointPath}`, { method });
+  const response = await fetch(`${baseUrl}${endpointPath}`, { method });
   let body = '';
   try {
     body = await response.text();
@@ -52,7 +52,7 @@ export async function isPortInUse(port: number): Promise<boolean> {
 }
 
 async function pollEndpointUntilOk(
-  port: number,
+  baseUrl: string,
   endpointPath: string,
   timeoutMs: number,
   retryLogMessage: string
@@ -60,7 +60,7 @@ async function pollEndpointUntilOk(
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const result = await httpRequestToWorker(port, endpointPath);
+      const result = await httpRequestToWorker(baseUrl, endpointPath);
       if (result.ok) return true;
     } catch (error) {
       if (error instanceof Error) {
@@ -74,12 +74,12 @@ async function pollEndpointUntilOk(
   return false;
 }
 
-export function waitForHealth(port: number, timeoutMs: number = 30000): Promise<boolean> {
-  return pollEndpointUntilOk(port, '/api/health', timeoutMs, 'Service not ready yet, will retry');
+export function waitForHealth(baseUrl: string, timeoutMs: number = 30000): Promise<boolean> {
+  return pollEndpointUntilOk(baseUrl, '/api/health', timeoutMs, 'Service not ready yet, will retry');
 }
 
-export function waitForReadiness(port: number, timeoutMs: number = 30000): Promise<boolean> {
-  return pollEndpointUntilOk(port, '/api/readiness', timeoutMs, 'Worker not ready yet, will retry');
+export function waitForReadiness(baseUrl: string, timeoutMs: number = 30000): Promise<boolean> {
+  return pollEndpointUntilOk(baseUrl, '/api/readiness', timeoutMs, 'Worker not ready yet, will retry');
 }
 
 export async function waitForPortFree(port: number, timeoutMs: number = 10000): Promise<boolean> {
@@ -91,9 +91,9 @@ export async function waitForPortFree(port: number, timeoutMs: number = 10000): 
   return false;
 }
 
-export async function httpShutdown(port: number): Promise<boolean> {
+export async function httpShutdown(baseUrl: string): Promise<boolean> {
   try {
-    const result = await httpRequestToWorker(port, '/api/admin/shutdown', 'POST');
+    const result = await httpRequestToWorker(baseUrl, '/api/admin/shutdown', 'POST');
     if (!result.ok) {
       logger.warn('SYSTEM', 'Shutdown request returned error', { status: result.statusCode });
       return false;
@@ -127,9 +127,9 @@ export function getInstalledPluginVersion(): string {
   }
 }
 
-export async function getRunningWorkerVersion(port: number): Promise<string | null> {
+export async function getRunningWorkerVersion(baseUrl: string): Promise<string | null> {
   try {
-    const result = await httpRequestToWorker(port, '/api/version');
+    const result = await httpRequestToWorker(baseUrl, '/api/version');
     if (!result.ok) return null;
     const data = JSON.parse(result.body) as { version: string };
     return data.version;
@@ -145,9 +145,9 @@ export interface VersionCheckResult {
   workerVersion: string | null;
 }
 
-export async function checkVersionMatch(port: number): Promise<VersionCheckResult> {
+export async function checkVersionMatch(baseUrl: string): Promise<VersionCheckResult> {
   const pluginVersion = getInstalledPluginVersion();
-  const workerVersion = await getRunningWorkerVersion(port);
+  const workerVersion = await getRunningWorkerVersion(baseUrl);
 
   if (!workerVersion || pluginVersion === 'unknown') {
     return { matches: true, pluginVersion, workerVersion };

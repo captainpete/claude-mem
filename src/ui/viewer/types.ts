@@ -70,6 +70,7 @@ export interface Settings {
   CLAUDE_MEM_CONTEXT_OBSERVATIONS: string;
   CLAUDE_MEM_WORKER_PORT: string;
   CLAUDE_MEM_WORKER_HOST: string;
+  CLAUDE_MEM_WORKER_URL: string;
 
   CLAUDE_MEM_PROVIDER?: string;  
   CLAUDE_MEM_GEMINI_API_KEY?: string;

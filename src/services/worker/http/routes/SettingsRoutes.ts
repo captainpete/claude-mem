@@ -86,6 +86,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CONTEXT_OBSERVATIONS',
       'CLAUDE_MEM_WORKER_PORT',
       'CLAUDE_MEM_WORKER_HOST',
+      'CLAUDE_MEM_WORKER_URL',
       'CLAUDE_MEM_PROVIDER',
       'CLAUDE_MEM_CLAUDE_AUTH_METHOD',
       'CLAUDE_MEM_GEMINI_API_KEY',
@@ -239,9 +240,22 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     if (settings.CLAUDE_MEM_WORKER_HOST) {
       const host = settings.CLAUDE_MEM_WORKER_HOST;
-      const validHostPattern = /^(127\.0\.0\.1|0\.0\.0\.0|localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/;
+      // Allow localhost variants, valid IPv4 patterns, and RFC-1123 hostnames (including .local mDNS)
+      const validHostPattern = /^(127\.0\.0\.1|0\.0\.0\.0|localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*)$/;
       if (!validHostPattern.test(host)) {
-        return { valid: false, error: 'CLAUDE_MEM_WORKER_HOST must be a valid IP address (e.g., 127.0.0.1, 0.0.0.0)' };
+        return { valid: false, error: 'CLAUDE_MEM_WORKER_HOST must be a valid IP address or hostname (e.g., 127.0.0.1, 0.0.0.0, claude-mem.local)' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_WORKER_URL (empty = local mode, non-empty = remote worker URL)
+    if (settings.CLAUDE_MEM_WORKER_URL && settings.CLAUDE_MEM_WORKER_URL.trim().length > 0) {
+      try {
+        const parsed = new URL(settings.CLAUDE_MEM_WORKER_URL.trim());
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return { valid: false, error: 'CLAUDE_MEM_WORKER_URL must be a valid http:// or https:// URL (e.g., http://claude-mem.local:37777)' };
+        }
+      } catch {
+        return { valid: false, error: 'CLAUDE_MEM_WORKER_URL must be a valid http:// or https:// URL (e.g., http://claude-mem.local:37777)' };
       }
     }
 

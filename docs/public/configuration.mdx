@@ -20,6 +20,7 @@ Settings are managed in `~/.claude-mem/settings.json`. The file is auto-created 
 | `CLAUDE_MEM_CONTEXT_OBSERVATIONS` | `50`                        | Number of observations to inject      |
 | `CLAUDE_MEM_WORKER_PORT`      | `37700 + (uid % 100)`           | Worker service port (per-user default; override for fixed port) |
 | `CLAUDE_MEM_WORKER_HOST`      | `127.0.0.1`                     | Worker service host address           |
+| `CLAUDE_MEM_WORKER_URL`       | `` (empty)                      | When set to a URL (e.g. `http://claude-mem.local:37777`), hooks connect to this remote worker and no local worker daemon is spawned. Empty string (default) means local mode. |
 | `CLAUDE_MEM_DATA_DIR`         | `~/.claude-mem`                 | Data root — every other path (database, chroma, logs, settings.json, worker.pid) derives from this |
 | `CLAUDE_MEM_SKIP_TOOLS`       | `ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion` | Comma-separated tools to exclude from observations |
 
@@ -208,6 +209,30 @@ Endless Mode is experimental and slower than standard mode. See [Beta Features](
 ## Worker Service Management
 
 Worker service is managed by Bun as a background process. The worker auto-starts on first session and runs continuously in the background.
+
+### Remote worker mode
+
+By default, each machine running claude-mem spawns its own local worker daemon and keeps its own database. If you want multiple machines on the same LAN to share a single memory store — for example, a Mac laptop and a home server — you can point clients at a single remote worker instead.
+
+**On the host machine (the one that will run the shared worker):**
+
+1. Edit `~/.claude-mem/settings.json` and set `CLAUDE_MEM_WORKER_HOST` to `0.0.0.0` so the worker binds on all network interfaces instead of only loopback.
+2. Restart the worker: `claude-mem stop && claude-mem start`.
+3. Verify from another machine: `curl http://<host>:37777/api/health` should return `200 OK`.
+
+**On each client machine:**
+
+1. Edit `~/.claude-mem/settings.json` and set `CLAUDE_MEM_WORKER_URL` to the host's URL (for example, `http://claude-mem.local:37777`).
+2. Stop any local worker: `claude-mem stop`.
+3. The next hook invocation will route to the remote worker — no local daemon is spawned, and the client's PID file stays empty.
+
+<Warning>
+Remote worker mode assumes a trusted LAN: the worker HTTP API has no authentication in v1. Do not expose the worker port to the public internet. A shared-secret `CLAUDE_MEM_WORKER_TOKEN` option is planned for a future release.
+</Warning>
+
+<Note>
+The client's local viewer (`http://localhost:37777`) will not serve pages in remote mode. Open the host's viewer URL directly (e.g. `http://claude-mem.local:37777`) to browse memories.
+</Note>
 
 ## Folder Context Files
 

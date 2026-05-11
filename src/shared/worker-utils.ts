@@ -60,6 +60,7 @@ export function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs:
 
 let cachedPort: number | null = null;
 let cachedHost: string | null = null;
+let cachedUrl: string | null = null;
 
 export function getWorkerPort(): number {
   if (cachedPort !== null) {
@@ -83,13 +84,57 @@ export function getWorkerHost(): string {
   return cachedHost;
 }
 
+/**
+ * Get the configured remote worker URL, if any.
+ * Uses CLAUDE_MEM_WORKER_URL from settings file or default ('').
+ * When non-empty, hooks connect to this URL and no local daemon is spawned.
+ * Caches the value to avoid repeated file reads.
+ */
+export function getWorkerUrl(): string {
+  if (cachedUrl !== null) {
+    return cachedUrl;
+  }
+
+  const settingsPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), 'settings.json');
+  const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+  cachedUrl = (settings.CLAUDE_MEM_WORKER_URL ?? '').trim();
+  return cachedUrl;
+}
+
+/**
+ * Returns true whenever CLAUDE_MEM_WORKER_URL is set to a non-empty value.
+ * URL parseability is enforced by SettingsRoutes at save time; here we only
+ * check whether the user has opted into remote mode at all. Loopback URLs
+ * are valid (e.g. when forwarded by an SSH tunnel on the local machine).
+ */
+export function isRemoteWorker(): boolean {
+  return getWorkerUrl().length > 0;
+}
+
 export function clearPortCache(): void {
   cachedPort = null;
   cachedHost = null;
+  cachedUrl = null;
 }
 
 export function buildWorkerUrl(apiPath: string): string {
+  if (isRemoteWorker()) {
+    const base = getWorkerUrl().replace(/\/$/, '');
+    return `${base}${apiPath}`;
+  }
   return `http://${getWorkerHost()}:${getWorkerPort()}${apiPath}`;
+}
+
+/**
+ * Base URL (no API path) for the worker HTTP server.
+ * In remote mode, returns the configured CLAUDE_MEM_WORKER_URL (trailing slash stripped).
+ * Otherwise http://{host}:{port}. Used by HealthMonitor functions that take a baseUrl.
+ */
+export function getWorkerBaseUrl(): string {
+  if (isRemoteWorker()) {
+    return getWorkerUrl().replace(/\/$/, '');
+  }
+  return `http://${getWorkerHost()}:${getWorkerPort()}`;
 }
 
 export function workerHttpRequest(
@@ -154,6 +199,10 @@ async function getWorkerVersion(): Promise<string> {
 }
 
 async function checkWorkerVersion(): Promise<void> {
+  // Remote worker mode: the client's plugin version may legitimately differ
+  // from the remote worker's version. Skip the comparison entirely.
+  if (isRemoteWorker()) return;
+
   let pluginVersion: string;
   try {
     pluginVersion = getPluginVersion();

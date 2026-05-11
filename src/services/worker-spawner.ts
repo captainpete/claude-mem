@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { logger } from '../utils/logger.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
+import { isRemoteWorker, getWorkerBaseUrl } from '../shared/worker-utils.js';
 import {
   cleanStalePidFile,
   getPlatformTimeout,
@@ -15,6 +16,10 @@ import {
   waitForHealth,
   waitForReadiness,
 } from './infrastructure/HealthMonitor.js';
+
+function localBaseUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
 
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
 
@@ -71,6 +76,20 @@ export async function ensureWorkerStarted(
   port: number,
   workerScriptPath: string
 ): Promise<WorkerStartResult> {
+  // Remote worker mode: skip all local spawn/PID logic. Just verify the
+  // remote is reachable. Hooks send observations to the configured URL.
+  if (isRemoteWorker()) {
+    const baseUrl = getWorkerBaseUrl();
+    logger.info('SYSTEM', 'Remote worker mode — skipping local spawn', { baseUrl });
+    const healthy = await waitForHealth(baseUrl, getPlatformTimeout(HOOK_TIMEOUTS.HEALTH_CHECK));
+    if (!healthy) {
+      logger.warn('SYSTEM', 'Remote worker not healthy — hook will proceed gracefully', { baseUrl });
+      return 'dead';
+    }
+    const ready = await waitForReadiness(baseUrl, getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
+    return ready ? 'ready' : 'warming';
+  }
+
   if (!workerScriptPath) {
     logger.error('SYSTEM', 'ensureWorkerStarted called with empty workerScriptPath — caller bug');
     return 'dead';
@@ -87,10 +106,10 @@ export async function ensureWorkerStarted(
   const pidFileStatus = cleanStalePidFile();
   if (pidFileStatus === 'alive') {
     logger.info('SYSTEM', 'Worker PID file points to a live process, skipping duplicate spawn');
-    const healthy = await waitForHealth(port, getPlatformTimeout(HOOK_TIMEOUTS.PORT_IN_USE_WAIT));
+    const healthy = await waitForHealth(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.PORT_IN_USE_WAIT));
     if (healthy) {
       clearWorkerSpawnAttempted();
-      const ready = await waitForReadiness(port, getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
+      const ready = await waitForReadiness(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
       logger.info('SYSTEM', 'Worker became healthy while waiting on live PID');
       return ready ? 'ready' : 'warming';
     }
@@ -98,9 +117,9 @@ export async function ensureWorkerStarted(
     return 'warming';
   }
 
-  if (await waitForHealth(port, 1000)) {
+  if (await waitForHealth(localBaseUrl(port), 1000)) {
     clearWorkerSpawnAttempted();
-    const ready = await waitForReadiness(port, getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
+    const ready = await waitForReadiness(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
     if (!ready) {
       logger.warn('SYSTEM', 'Worker is alive but readiness timed out — proceeding anyway');
     }
@@ -111,10 +130,10 @@ export async function ensureWorkerStarted(
   const portInUse = await isPortInUse(port);
   if (portInUse) {
     logger.info('SYSTEM', 'Port in use, waiting for worker to become healthy');
-    const healthy = await waitForHealth(port, getPlatformTimeout(HOOK_TIMEOUTS.PORT_IN_USE_WAIT));
+    const healthy = await waitForHealth(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.PORT_IN_USE_WAIT));
     if (healthy) {
       clearWorkerSpawnAttempted();
-      const ready = await waitForReadiness(port, getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
+      const ready = await waitForReadiness(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
       logger.info('SYSTEM', 'Worker is now healthy');
       return ready ? 'ready' : 'warming';
     }
@@ -135,13 +154,13 @@ export async function ensureWorkerStarted(
     return 'dead';
   }
 
-  const healthy = await waitForHealth(port, getPlatformTimeout(HOOK_TIMEOUTS.POST_SPAWN_WAIT));
+  const healthy = await waitForHealth(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.POST_SPAWN_WAIT));
   if (!healthy) {
     logger.warn('SYSTEM', 'Worker spawned but health endpoint not responding within window — likely still starting in background');
     return 'warming';
   }
 
-  const ready = await waitForReadiness(port, getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
+  const ready = await waitForReadiness(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.READINESS_WAIT));
   if (!ready) {
     logger.warn('SYSTEM', 'Worker is alive but readiness timed out — proceeding anyway');
   }

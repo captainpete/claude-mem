@@ -281,6 +281,14 @@ describe('SettingsDefaultsManager', () => {
       expect(defaults.CLAUDE_MEM_DATA_DIR).toBeDefined();
       expect(defaults.CLAUDE_MEM_LOG_LEVEL).toBeDefined();
     });
+
+    it('should default CLAUDE_MEM_WORKER_URL to empty string (local mode)', () => {
+      const defaults = SettingsDefaultsManager.getAllDefaults();
+      // Empty string = local mode, matching the remote-worker feature contract.
+      // Non-empty value (e.g. 'http://claude-mem.local:37777') switches to remote mode
+      // where no local daemon is spawned.
+      expect(defaults.CLAUDE_MEM_WORKER_URL).toBe('');
+    });
   });
 
   describe('get', () => {

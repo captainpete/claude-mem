@@ -5,8 +5,12 @@ import { spawn } from 'child_process';
 import { Database } from 'bun:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { getWorkerPort, getWorkerHost, isRemoteWorker, getWorkerBaseUrl } from '../shared/worker-utils.js';
 import { DATA_DIR, DB_PATH, ensureDir } from '../shared/paths.js';
+
+function localBaseUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import { getAuthMethodDescription } from '../shared/EnvManager.js';
@@ -977,6 +981,13 @@ async function main() {
 
   switch (command) {
     case 'start': {
+      // Remote worker mode: nothing to start locally. Surface a clear status
+      // for `claude-mem start` invoked manually on the client.
+      if (isRemoteWorker()) {
+        const baseUrl = getWorkerBaseUrl();
+        logger.info('SYSTEM', 'Remote worker mode — no local daemon to start', { baseUrl });
+        exitWithStatus('ready', `Remote worker mode (${baseUrl}) — nothing to start locally`);
+      }
       const result = await ensureWorkerStarted(port);
       if (result === 'dead') {
         exitWithStatus('error', 'Failed to start worker');
@@ -987,7 +998,13 @@ async function main() {
     }
 
     case 'stop': {
-      await httpShutdown(port);
+      // Remote worker mode: the remote daemon is managed on the host machine,
+      // not from here. Exit cleanly without touching it.
+      if (isRemoteWorker()) {
+        logger.info('SYSTEM', 'Remote worker mode — stop is a no-op on the client', { baseUrl: getWorkerBaseUrl() });
+        process.exit(0);
+      }
+      await httpShutdown(localBaseUrl(port));
       const freed = await waitForPortFree(port, getPlatformTimeout(15000));
       if (!freed) {
         logger.warn('SYSTEM', 'Port did not free up after shutdown', { port });
@@ -999,9 +1016,14 @@ async function main() {
     }
 
     case 'restart': {
+      // Remote worker mode: can't restart a daemon we don't manage.
+      if (isRemoteWorker()) {
+        logger.info('SYSTEM', 'Remote worker mode — restart is a no-op on the client', { baseUrl: getWorkerBaseUrl() });
+        process.exit(0);
+      }
       logger.info('SYSTEM', 'Restarting worker');
-      await httpShutdown(port);
-      const restartFreed = await waitForPortFree(port, 5000);
+      await httpShutdown(localBaseUrl(port));
+      const restartFreed = await waitForPortFree(port, getPlatformTimeout(15000));
       if (!restartFreed) {
         console.error('Port still bound after shutdown. Resolve manually.');
         process.exit(1);
@@ -1013,6 +1035,13 @@ async function main() {
         process.exit(1);
       }
       logger.info('SYSTEM', 'Worker restart spawned', { pid: restartPid });
+      const healthy = await waitForHealth(localBaseUrl(port), getPlatformTimeout(HOOK_TIMEOUTS.POST_SPAWN_WAIT));
+      if (!healthy) {
+        removePidFile();
+        logger.error('SYSTEM', 'Worker failed to restart');
+        process.exit(0);
+      }
+      logger.info('SYSTEM', 'Worker restarted successfully');
       process.exit(0);
       break;
     }
@@ -1177,6 +1206,13 @@ async function main() {
 
     case '--daemon':
     default: {
+      // Remote worker mode: no local daemon should ever run. A daemon here would
+      // create a split database (local + remote) and waste resources.
+      if (isRemoteWorker()) {
+        logger.info('SYSTEM', 'Remote worker mode — daemon startup aborted', { baseUrl: getWorkerBaseUrl() });
+        process.exit(0);
+      }
+
       const existingPidInfo = readPidFile();
       if (verifyPidFileOwnership(existingPidInfo)) {
         logger.info('SYSTEM', 'Worker already running (PID alive), refusing to start duplicate', {
@@ -1208,7 +1244,7 @@ async function main() {
           (error as NodeJS.ErrnoException).code === 'EADDRINUSE' ||
           /port.*in use|address.*in use/i.test(error.message)
         );
-        if (isPortConflict && await waitForHealth(port, 3000)) {
+        if (isPortConflict && await waitForHealth(localBaseUrl(port), 3000)) {
           logger.info('SYSTEM', 'Duplicate daemon exiting — another worker already claimed port', { port });
           process.exit(0);
         }
