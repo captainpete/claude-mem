@@ -8,6 +8,12 @@ import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
 import { MARKETPLACE_ROOT, DATA_DIR } from "./paths.js";
 import { loadFromFileOnce } from "./hook-settings.js";
 import { validateWorkerPidFile } from "../supervisor/index.js";
+import {
+  enqueue as spoolEnqueue,
+  drain as spoolDrain,
+  pendingCount as spoolPendingCount,
+  type Replayer as SpoolReplayer,
+} from "../services/spool/index.js";
 
 function readTimeoutEnv(
   envName: string,
@@ -495,6 +501,16 @@ export interface WorkerFallbackOptions {
   timeoutMs?: number;
 }
 
+function spoolWriteOnFallback(
+  url: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  body: unknown,
+): void {
+  if (body === undefined) return;
+  if (method === 'GET') return;
+  spoolEnqueue({ url, method, body });
+}
+
 export async function executeWithWorkerFallback<T = unknown>(
   url: string,
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -504,6 +520,7 @@ export async function executeWithWorkerFallback<T = unknown>(
   const alive = await ensureWorkerAliveOnce();
   if (!alive) {
     recordWorkerUnreachable();
+    spoolWriteOnFallback(url, method, body);
     return { continue: true, reason: 'worker_unreachable', [WORKER_FALLBACK_BRAND]: true };
   }
 
@@ -524,6 +541,7 @@ export async function executeWithWorkerFallback<T = unknown>(
       logger.warn('SYSTEM', `Worker API ${method} ${url} returned ${response.status}; skipping hook API call`, {
         body: text.substring(0, 200),
       });
+      spoolWriteOnFallback(url, method, body);
       return {
         continue: true,
         reason: `worker_api_${response.status}`,
@@ -544,4 +562,32 @@ export async function executeWithWorkerFallback<T = unknown>(
   } catch {
     return text as unknown as T;
   }
+}
+
+export async function drainSpool(timeoutMs: number = 5000): Promise<{ drained: number; remaining: number }> {
+  if (spoolPendingCount() === 0) return { drained: 0, remaining: 0 };
+
+  const replayer: SpoolReplayer = async (req) => {
+    const init: { method: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {
+      method: req.method,
+      timeoutMs: API_REQUEST_TIMEOUT_MS,
+    };
+    if (req.body !== undefined) {
+      init.headers = { 'Content-Type': 'application/json' };
+      init.body = JSON.stringify(req.body);
+    }
+    try {
+      const response = await workerHttpRequest(req.url, init);
+      return { ok: response.ok };
+    } catch {
+      return { ok: false };
+    }
+  };
+
+  const result = await spoolDrain(replayer, { timeoutMs });
+  return { drained: result.drained, remaining: result.remaining };
+}
+
+export function enqueueImport(payload: { sessions: unknown[]; observations: unknown[] }): void {
+  spoolEnqueue({ url: '/api/import', method: 'POST', body: payload });
 }

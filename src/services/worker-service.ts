@@ -5,7 +5,8 @@ import { spawn } from 'child_process';
 import { Database } from 'bun:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getWorkerPort, getWorkerHost, isRemoteWorker, getWorkerBaseUrl } from '../shared/worker-utils.js';
+import { getWorkerPort, getWorkerHost, isRemoteWorker, getWorkerBaseUrl, drainSpool, enqueueImport } from '../shared/worker-utils.js';
+import { scanAndQueue as scanNativeMemory } from './native-memory/index.js';
 import { DATA_DIR, DB_PATH, ensureDir } from '../shared/paths.js';
 
 function localBaseUrl(port: number): string {
@@ -1130,8 +1131,26 @@ async function main() {
       }
 
       const { hookCommand } = await import('../cli/hook-command.js');
-      await hookCommand(platform, event);
-      break;
+      const exitCode = await hookCommand(platform, event, { skipExit: true });
+
+      try {
+        const shouldScan = event === 'session-init' || event === 'context';
+        if (shouldScan) {
+          const scan = await scanNativeMemory(enqueueImport, { timeoutMs: 1500 });
+          if (scan.chunksQueued > 0) {
+            logger.info('SYSTEM', 'native-memory scan queued chunks', scan);
+          }
+        }
+        const drained = await drainSpool(3000);
+        if (drained.drained > 0 || drained.remaining > 0) {
+          logger.info('SYSTEM', 'spool drain', drained);
+        }
+      } catch (error: unknown) {
+        logger.debug('SYSTEM', 'native-memory/spool step failed (non-fatal)', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      process.exit(exitCode);
     }
 
     case 'generate': {
