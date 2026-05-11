@@ -234,6 +234,46 @@ Remote worker mode assumes a trusted LAN: the worker HTTP API has no authenticat
 The client's local viewer (`http://localhost:37777`) will not serve pages in remote mode. Open the host's viewer URL directly (e.g. `http://claude-mem.local:37777`) to browse memories.
 </Note>
 
+### Offline tolerance (request spool)
+
+Every hook invocation that needs to send a write to the worker (observation, session-init, import) goes through a small offline-tolerant layer:
+
+- If the worker is reachable, the request goes through directly.
+- If the worker is unreachable (network error, 429, 5xx), the request is written atomically to `$CLAUDE_MEM_DATA_DIR/spool/pending/<ts>-<rand>.json`.
+- Every hook firing then runs a best-effort drain (3-second budget, batched) that replays queued requests in order until the spool is empty or the budget runs out.
+
+The spool is intentionally simple — plain JSON files on disk, no database, no native dependencies. Pending counts are inspectable with `ls ~/.claude-mem/spool/pending`. Drain progress is logged at `INFO` level:
+
+```
+[SYSTEM] spool drain {drained=2, remaining=0}
+```
+
+Idempotency of replayed requests is the worker's responsibility — `/api/import` already dedups on `(memory_session_id, title, created_at_epoch)`. Observation writes that aren't idempotent on the server side may be duplicated in rare cases where the network drops after the server received the request but before it replied.
+
+### Native-memory mirroring
+
+Claude Code maintains its own native memory files at `$CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/memory/*.md` (defaults to `~/.claude/projects/...`). These edits don't pass through claude-mem's tool-observation pipeline, so a separate scanner runs on `session-init` and `context` hook events to mirror them into the worker:
+
+- Walks every project memory directory under the projects root.
+- Chunks each `.md` file on `#` / `##` headings.
+- Diffs each file against a shadow copy at `$CLAUDE_MEM_DATA_DIR/native-memory-shadow/<project>/<file>` (per-machine baseline).
+- Queues new chunks to the spool as `/api/import` payloads with `type='native_memory'` and `memory_session_id='native-memory:<project>/<filename>'`.
+- Writes the new content to the shadow on the way out.
+
+Project name is resolved via `git -C <cwd> rev-parse --show-toplevel` (basename), cached at `$CLAUDE_MEM_DATA_DIR/spool/project-cache.json`. Encoded directory names are decoded back to real CWDs by trying the naive `-` → `/` substitution first, then walking candidate paths.
+
+The scan is bounded (default 1.5-second budget) so a slow git invocation or a large memory tree never blocks the hook. Files not visited this round are picked up on the next session-init.
+
+To bootstrap from existing memory files (first run on a new machine), trigger any session — the scan emits every chunk on first sight; the worker dedups against any prior imports.
+
+To wipe local diff state and force a full re-emit (useful if the shadow gets out of sync):
+
+```sh
+rm -rf ~/.claude-mem/native-memory-shadow/
+```
+
+The next hook firing will see every chunk as new and queue them all.
+
 ## Folder Context Files
 
 Claude-mem can automatically generate `CLAUDE.md` files in your project folders with activity timelines. This feature is disabled by default.
