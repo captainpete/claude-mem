@@ -519,8 +519,10 @@ export async function executeWithWorkerFallback<T = unknown>(
 ): Promise<WorkerCallResult<T>> {
   const alive = await ensureWorkerAliveOnce();
   if (!alive) {
-    recordWorkerUnreachable();
+    // Spool before bookkeeping so observations queue even if a future change
+    // to recordWorkerUnreachable reintroduces an early process.exit.
     spoolWriteOnFallback(url, method, body);
+    recordWorkerUnreachable();
     return { continue: true, reason: 'worker_unreachable', [WORKER_FALLBACK_BRAND]: true };
   }
 
