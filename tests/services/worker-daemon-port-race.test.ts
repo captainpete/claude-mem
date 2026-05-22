@@ -15,7 +15,9 @@ describe('Worker daemon port-race guard (#1447)', () => {
   });
 
   it('calls waitForHealth before exiting on a port conflict', () => {
-    expect(source).toContain('isPortConflict && await waitForHealth(port,');
+    // Argument is localBaseUrl(port) since worker-spawner refactored
+    // waitForHealth to take a baseUrl for remote-worker support.
+    expect(source).toContain('isPortConflict && await waitForHealth(localBaseUrl(port),');
   });
 
   it('uses async catch handler to allow awaiting waitForHealth', () => {
