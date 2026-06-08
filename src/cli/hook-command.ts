@@ -105,11 +105,18 @@ export async function hookCommand(platform: string, event: string, options: Hook
       return HOOK_EXIT_CODES.SUCCESS;
     }
 
+    // claude-mem hooks are passive observers — none should ever block the user
+    // or surface as terminal noise. Record the error at ERROR level (lands in the
+    // worker log file for diagnostics) but exit 0 per the documented philosophy
+    // ("Worker/hook errors exit with code 0"). Exiting BLOCKING_ERROR (2) here
+    // with stderr swallowed by the override above renders as the user-facing
+    // "Stop hook error: [...]: No stderr output" noise during e.g. a remote
+    // worker restart, where transient errors may not match isWorkerUnavailableError.
     logger.error('HOOK', `Hook error: ${error instanceof Error ? error.message : error}`, {}, error instanceof Error ? error : undefined);
     if (!options.skipExit) {
-      process.exit(HOOK_EXIT_CODES.BLOCKING_ERROR);  
+      process.exit(HOOK_EXIT_CODES.SUCCESS);
     }
-    return HOOK_EXIT_CODES.BLOCKING_ERROR;
+    return HOOK_EXIT_CODES.SUCCESS;
   } finally {
     process.stderr.write = originalStderrWrite;
   }
