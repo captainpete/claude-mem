@@ -156,6 +156,8 @@ Restart Claude Code or Gemini CLI. Context from previous sessions will automatic
 
 > **Note:** Claude-Mem is also published on npm, but `npm install -g claude-mem` installs the **SDK/library only** — it does not register the plugin hooks or set up the worker service. Always install via `npx claude-mem install` or the `/plugin` commands above.
 
+> **Running this fork?** This fork adds a `CLAUDE_MEM_WORKER_URL` setting so a client can use a shared remote worker (no local worker or database). The commands above install **stock** claude-mem — to install the fork instead, see **[Installing this fork](docs/fork-install.md)**.
+
 ### 🦞 OpenClaw Gateway
 
 Install claude-mem as a persistent memory plugin on [OpenClaw](https://openclaw.ai) gateways with a single command:
@@ -211,6 +213,7 @@ The installer handles dependencies, plugin setup, AI provider configuration, wor
 ### Configuration & Development
 
 - **[Configuration](https://docs.claude-mem.ai/configuration)** - Environment variables & settings
+- **[Installing this fork](docs/fork-install.md)** - Remote worker mode (`CLAUDE_MEM_WORKER_URL`) install & setup
 - **[Development](https://docs.claude-mem.ai/development)** - Building, testing, contributing
 - **[Troubleshooting](https://docs.claude-mem.ai/troubleshooting)** - Common issues & solutions
 
